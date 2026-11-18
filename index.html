@@ -16,6 +16,11 @@
     --head: #f3f4f6;
     --accent: #1a56db;
     --warn: #8a5300;
+    --series: #2a78d6;
+    --grid: #dcdfe3;
+    --axis: #9aa0a6;
+    --tip-bg: #1d1d1f;
+    --tip-fg: #ffffff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -26,6 +31,11 @@
       --head: #22262c;
       --accent: #8ab4f8;
       --warn: #f2b45a;
+      --series: #3987e5;
+      --grid: #2c3036;
+      --axis: #6b7178;
+      --tip-bg: #e8eaed;
+      --tip-fg: #16181c;
     }
   }
   * { box-sizing: border-box; }
@@ -74,6 +84,72 @@
   tbody th { font-weight: normal; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
   td { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   thead th.num { text-align: right; }
+
+  /* 막대그래프: 문항 이름 | 0~5점 막대. 막대 끝 값이 들어갈 자리를 오른쪽에 남긴다. */
+  .chart { position: relative; margin: 24px 0 0; }
+  .chart figcaption { font-weight: 600; margin-bottom: 8px; }
+  .chart-row, .chart-axis {
+    display: grid;
+    grid-template-columns: minmax(5em, 30%) 1fr;
+    column-gap: 12px;
+  }
+  .chart-row { align-items: center; min-height: 36px; border-radius: 4px; outline-offset: 0; }
+  .chart-row:hover, .chart-row:focus-visible { background: var(--head); }
+  .chart-row:focus-visible { outline: 2px solid var(--accent); }
+  .chart-label { padding: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9375rem; }
+  .chart-track { align-self: stretch; padding-right: 3.5em; }
+  .chart-plot {
+    position: relative;
+    height: 100%;
+    min-height: 36px;
+    border-left: 1px solid var(--axis);
+    border-right: 1px solid var(--grid);
+    background-image: linear-gradient(to right, var(--grid) 1px, transparent 1px);
+    background-size: 20% 100%;
+  }
+  .chart-bar {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    height: 20px;
+    transform: translateY(-50%);
+    background: var(--series);
+    border-radius: 0 4px 4px 0;
+  }
+  .chart-value {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    padding-left: 6px;
+    font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .chart-value.none { color: var(--muted); }
+  .chart-axis .chart-track { padding-top: 4px; }
+  .chart-axis .chart-plot { min-height: 1.25em; border: 0; background: none; }
+  .chart-tick {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    color: var(--muted);
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .chart-tip {
+    position: absolute;
+    z-index: 1;
+    max-width: 260px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--tip-bg);
+    color: var(--tip-fg);
+    font-size: 0.875rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -105,6 +181,16 @@
         <tbody></tbody>
       </table>
     </div>
+
+    <figure id="chart" class="chart" hidden>
+      <figcaption>문항별 평균 <span class="muted">(0~5점, 값은 위 표와 같음)</span></figcaption>
+      <div id="chart-rows" role="list"></div>
+      <div class="chart-axis" aria-hidden="true">
+        <div></div>
+        <div class="chart-track"><div class="chart-plot" id="chart-ticks"></div></div>
+      </div>
+      <div id="chart-tip" class="chart-tip" role="tooltip" hidden></div>
+    </figure>
   </section>
 </main>
 
@@ -289,6 +375,83 @@
   var warning = document.getElementById("warning");
   var table = document.getElementById("result");
   var tbody = table.tBodies[0];
+  var chart = document.getElementById("chart");
+  var chartRows = document.getElementById("chart-rows");
+  var chartTicks = document.getElementById("chart-ticks");
+  var chartTip = document.getElementById("chart-tip");
+
+  function div(className, text) {
+    var el = document.createElement("div");
+    el.className = className;
+    if (text !== undefined) el.textContent = String(text);
+    return el;
+  }
+
+  function percent(ratio) {
+    return (ratio * 100).toFixed(4) + "%";
+  }
+
+  // 눈금(0~5점)은 한 번만 그린다.
+  for (var t = 0; t <= SurveyTally.SCALE_MAX; t++) {
+    var tick = div("chart-tick", t);
+    tick.style.left = percent(t / SurveyTally.SCALE_MAX);
+    chartTicks.appendChild(tick);
+  }
+
+  function showTip(row, bar) {
+    chartTip.textContent = bar.label + "\n" + (bar.ratio === null
+      ? "유효 응답이 없어 평균을 낼 수 없음"
+      : "평균 " + bar.average + " · 유효 응답 " + bar.valid);
+    chartTip.hidden = false;
+    var box = chart.getBoundingClientRect();
+    var r = row.getBoundingClientRect();
+    var left = Math.min(r.left - box.left + r.width * 0.3, box.width - chartTip.offsetWidth);
+    chartTip.style.left = Math.max(0, left) + "px";
+    chartTip.style.top = (r.top - box.top - chartTip.offsetHeight - 4) + "px";
+  }
+
+  function hideTip() {
+    chartTip.hidden = true;
+  }
+
+  function renderChart(questions) {
+    chartRows.replaceChildren();
+    hideTip();
+    SurveyTally.barChartData(questions).forEach(function (bar) {
+      var row = div("chart-row");
+      row.setAttribute("role", "listitem");
+      row.tabIndex = 0;
+      row.setAttribute("aria-label", bar.label + ": 평균 " +
+        (bar.ratio === null ? "없음(유효 응답 0)" : bar.average + "점, 유효 응답 " + bar.valid));
+
+      var track = div("chart-track");
+      var plot = div("chart-plot");
+      if (bar.ratio === null) {
+        plot.appendChild(div("chart-value none", "-"));
+      } else {
+        var mark = div("chart-bar");
+        mark.style.width = percent(bar.ratio);
+        var value = div("chart-value", bar.average);
+        value.style.left = percent(bar.ratio);
+        plot.appendChild(mark);
+        plot.appendChild(value);
+      }
+      track.appendChild(plot);
+      var label = div("chart-label", bar.label);
+      label.setAttribute("aria-hidden", "true");
+      track.setAttribute("aria-hidden", "true");
+      row.appendChild(label);
+      row.appendChild(track);
+
+      var show = function () { showTip(row, bar); };
+      row.addEventListener("pointerenter", show);
+      row.addEventListener("focus", show);
+      row.addEventListener("pointerleave", hideTip);
+      row.addEventListener("blur", hideTip);
+      chartRows.appendChild(row);
+    });
+    chart.hidden = questions.length === 0;
+  }
 
   function cell(tag, text, scope) {
     var el = document.createElement(tag);
@@ -302,6 +465,8 @@
     tbody.replaceChildren();
     warning.hidden = true;
     warning.textContent = "";
+
+    renderChart(result.questions);
 
     if (result.questions.length === 0) {
       table.hidden = true;
