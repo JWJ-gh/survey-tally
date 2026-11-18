@@ -20,6 +20,15 @@
 
 자세한 결정 사항은 [docs/PLAN.md](docs/PLAN.md)에 있습니다.
 
+## 종유석 피하기 (게임)
+
+`game/index.html`은 집계기와 별개인 한 파일짜리 게임입니다. 위에서 떨어지는 종유석을 좌우로 움직여 피하고, 바닥까지 떨어진(피한) 종유석 하나당 1점을 얻습니다. 시간이 지날수록 종유석이 빨라지고 자주 떨어집니다.
+
+- <kbd>A</kbd> 또는 <kbd>←</kbd> 왼쪽, <kbd>D</kbd> 또는 <kbd>→</kbd> 오른쪽. 한글 입력 상태(ㅁ·ㅇ)에서도 동작합니다.
+- <kbd>Space</kbd> 시작·다시 시작, <kbd>P</kbd> 일시정지. 창을 벗어나면 자동으로 멈춥니다.
+- 휴대폰에서는 화면 아래 ◀ ▶ 버튼으로 움직입니다.
+- 최고 점수만 이 브라우저에 저장합니다(`localStorage`). 다른 데이터는 저장하거나 보내지 않습니다.
+
 ## 시험
 
 Node.js 22 이상이 필요하며 설치할 패키지는 없습니다.
@@ -30,3 +39,4 @@ npm test
 
 - `test/tally.test.js`: `index.html`의 `<script id="tally-core">` 블록을 꺼내 집계 계산을 시험합니다.
 - `test/static.test.js`: 외부 자원, 네트워크·저장 API가 없는지, CSP와 `.nojekyll`이 있는지 검사합니다.
+- `test/game.test.js`: `game/index.html`의 `<script id="game-core">` 블록을 꺼내 이동, 종유석 생성, 충돌, 점수, 일시정지를 시험합니다.

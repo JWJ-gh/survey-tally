@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>종유석 피하기</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1114;
+    --fg: #e8eaed;
+    --muted: #9aa0a6;
+    --line: #3a3f46;
+    --button: #22262c;
+    --accent: #f2b45a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  main { max-width: 480px; margin: 0 auto; padding: 16px 16px 32px; }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  p { margin: 0 0 12px; color: var(--muted); font-size: 0.9375rem; }
+  kbd {
+    display: inline-block;
+    min-width: 1.6em;
+    padding: 0 4px;
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 0.875rem;
+    text-align: center;
+    color: var(--fg);
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 3 / 4;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    touch-action: none;
+  }
+  canvas:focus { outline: none; }
+  .keys { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .keys span { white-space: nowrap; }
+  .pad { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .pad button {
+    font: inherit;
+    font-size: 1.25rem;
+    padding: 14px 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--button);
+    color: var(--fg);
+    touch-action: none;
+  }
+  .pad button.held { background: var(--line); }
+  @media (hover: hover) and (pointer: fine) { .pad { display: none; } }
+  .back { display: inline-block; margin-top: 16px; color: var(--muted); font-size: 0.875rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>종유석 피하기</h1>
+  <p class="keys">
+    <span><kbd>A</kbd> <kbd>←</kbd> 왼쪽</span>
+    <span><kbd>D</kbd> <kbd>→</kbd> 오른쪽</span>
+    <span><kbd>Space</kbd> 시작</span>
+    <span><kbd>P</kbd> 일시정지</span>
+  </p>
+  <canvas id="screen" width="480" height="640" tabindex="0" aria-label="종유석 피하기 게임 화면"></canvas>
+  <div class="pad" aria-hidden="true">
+    <button type="button" id="pad-left" tabindex="-1">◀</button>
+    <button type="button" id="pad-right" tabindex="-1">▶</button>
+  </div>
+  <a class="back" href="../">← 설문 집계기로</a>
+</main>
+
+<!-- 게임 규칙: 화면과 무관한 순수 함수. 시험(test/game.test.js)이 이 블록만 꺼내 실행한다. -->
+<script id="game-core">
+(function (root) {
+  "use strict";
+
+  var WIDTH = 480;
+  var HEIGHT = 640;
+  var FLOOR_Y = HEIGHT - 24;          // 바닥 윗면
+  var PLAYER_W = 36;
+  var PLAYER_H = 30;
+  var PLAYER_SPEED = 320;             // 픽셀/초
+  var HITBOX_INSET = 4;               // 판정을 그림보다 조금 작게 해 억울한 충돌을 줄인다
+  var MAX_DT = 0.05;                  // 탭 전환 뒤 큰 시간 간격으로 순간이동하지 않게
+
+  // 시간이 지날수록 빨라지고 자주 떨어진다.
+  function fallSpeed(time) {
+    return Math.min(170 + 14 * time, 520);
+  }
+  function spawnInterval(time) {
+    return Math.max(0.28, 0.85 - 0.02 * time);
+  }
+
+  function createGame() {
+    return {
+      phase: "ready",                 // ready | playing | paused | over
+      time: 0,
+      score: 0,
+      playerX: (WIDTH - PLAYER_W) / 2,
+      spikes: [],
+      spawnTimer: 0.6
+    };
+  }
+
+  function start(state) {
+    var fresh = createGame();
+    fresh.phase = "playing";
+    return fresh;
+  }
+
+  function playerRect(state) {
+    return {
+      x: state.playerX + HITBOX_INSET,
+      y: FLOOR_Y - PLAYER_H + HITBOX_INSET,
+      w: PLAYER_W - 2 * HITBOX_INSET,
+      h: PLAYER_H - HITBOX_INSET
+    };
+  }
+
+  // 종유석은 아래를 향한 삼각형: 윗변 (x, y)~(x+w, y), 끝 (x+w/2, y+h)
+  function spikePoints(s) {
+    return [
+      { x: s.x, y: s.y },
+      { x: s.x + s.w, y: s.y },
+      { x: s.x + s.w / 2, y: s.y + s.h }
+    ];
+  }
+
+  function makeSpike(time, rng) {
+    var w = 18 + rng() * 26;
+    var h = w * (1.8 + rng() * 0.8);
+    return {
+      x: rng() * (WIDTH - w),
+      y: -h,
+      w: w,
+      h: h,
+      vy: fallSpeed(time) * (0.85 + rng() * 0.3)
+    };
+  }
+
+  function cross(o, a, b) {
+    return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  }
+
+  function segmentsIntersect(p1, p2, p3, p4) {
+    var d1 = cross(p3, p4, p1);
+    var d2 = cross(p3, p4, p2);
+    var d3 = cross(p1, p2, p3);
+    var d4 = cross(p1, p2, p4);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+           ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  }
+
+  function pointInRect(p, r) {
+    return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  }
+
+  function pointInTriangle(p, t) {
+    var a = cross(t[0], t[1], p);
+    var b = cross(t[1], t[2], p);
+    var c = cross(t[2], t[0], p);
+    return (a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0);
+  }
+
+  // 삼각형과 직사각형이 겹치는가(경계에 닿기만 해도 겹침으로 본다).
+  function triangleHitsRect(tri, r) {
+    var corners = [
+      { x: r.x, y: r.y }, { x: r.x + r.w, y: r.y },
+      { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }
+    ];
+    var i, j;
+    for (i = 0; i < 3; i++) if (pointInRect(tri[i], r)) return true;
+    for (i = 0; i < 4; i++) if (pointInTriangle(corners[i], tri)) return true;
+    for (i = 0; i < 3; i++) {
+      for (j = 0; j < 4; j++) {
+        if (segmentsIntersect(tri[i], tri[(i + 1) % 3], corners[j], corners[(j + 1) % 4])) return true;
+      }
+    }
+    return false;
+  }
+
+  // 한 번의 갱신. input = { left: bool, right: bool }, rng = 0 이상 1 미만을 돌려주는 함수.
+  function step(state, input, dt, rng) {
+    if (state.phase !== "playing") return state;
+    dt = Math.max(0, Math.min(dt, MAX_DT));
+
+    var dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    state.playerX = Math.max(0, Math.min(WIDTH - PLAYER_W, state.playerX + dir * PLAYER_SPEED * dt));
+    state.time += dt;
+
+    state.spawnTimer -= dt;
+    while (state.spawnTimer <= 0) {
+      state.spikes.push(makeSpike(state.time, rng));
+      state.spawnTimer += spawnInterval(state.time);
+    }
+
+    var player = playerRect(state);
+    var kept = [];
+    for (var i = 0; i < state.spikes.length; i++) {
+      var s = state.spikes[i];
+      s.y += s.vy * dt;
+      if (triangleHitsRect(spikePoints(s), player)) {
+        state.phase = "over";
+      }
+      if (s.y > FLOOR_Y) {
+        state.score++;               // 바닥까지 떨어진(피한) 종유석 하나당 1점
+      } else {
+        kept.push(s);
+      }
+    }
+    state.spikes = kept;
+    return state;
+  }
+
+  function togglePause(state) {
+    if (state.phase === "playing") state.phase = "paused";
+    else if (state.phase === "paused") state.phase = "playing";
+    return state;
+  }
+
+  root.StalactiteGame = {
+    WIDTH: WIDTH,
+    HEIGHT: HEIGHT,
+    FLOOR_Y: FLOOR_Y,
+    PLAYER_W: PLAYER_W,
+    PLAYER_H: PLAYER_H,
+    PLAYER_SPEED: PLAYER_SPEED,
+    fallSpeed: fallSpeed,
+    spawnInterval: spawnInterval,
+    createGame: createGame,
+    start: start,
+    step: step,
+    togglePause: togglePause,
+    playerRect: playerRect,
+    spikePoints: spikePoints,
+    triangleHitsRect: triangleHitsRect
+  };
+})(typeof globalThis !== "undefined" ? globalThis : this);
+</script>
+
+<!-- 화면: 키 입력을 받아 step을 돌리고 캔버스에 그린다. -->
+<script>
+(function () {
+  "use strict";
+  var G = StalactiteGame;
+  var canvas = document.getElementById("screen");
+  var ctx = canvas.getContext("2d");
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = G.WIDTH * dpr;
+  canvas.height = G.HEIGHT * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  var BEST_KEY = "stalactite-dodge-best";
+  var state = G.createGame();
+  var keys = { left: false, right: false };
+  var pad = { left: false, right: false };
+  var best = 0;
+  try { best = Number(localStorage.getItem(BEST_KEY)) || 0; } catch (e) { best = 0; }
+
+  function saveBest() {
+    if (state.score > best) {
+      best = state.score;
+      try { localStorage.setItem(BEST_KEY, String(best)); } catch (e) { /* 저장 못 해도 게임은 계속 */ }
+    }
+  }
+
+  // 천장 바위 모양은 한 번만 만든다(고정된 값으로).
+  var ceiling = [];
+  for (var cx = 0, k = 0; cx <= G.WIDTH; cx += 24, k++) {
+    ceiling.push({ x: cx, y: 14 + ((k * 37) % 17) });
+  }
+
+  // ---------- 입력 ----------
+  // e.code로 판정해 한글 입력 상태(W가 'ㅈ'로 들어오는 경우)에서도 동작하게 한다.
+  var LEFT_CODES = { KeyA: true, ArrowLeft: true };
+  var RIGHT_CODES = { KeyD: true, ArrowRight: true };
+
+  function startOrRestart() {
+    if (state.phase === "ready" || state.phase === "over") state = G.start(state);
+    else if (state.phase === "paused") G.togglePause(state);
+  }
+
+  window.addEventListener("keydown", function (e) {
+    if (LEFT_CODES[e.code]) { keys.left = true; e.preventDefault(); }
+    else if (RIGHT_CODES[e.code]) { keys.right = true; e.preventDefault(); }
+    else if (e.code === "Space" || e.code === "Enter") {
+      if (!e.repeat) startOrRestart();
+      e.preventDefault();
+    } else if (e.code === "KeyP" || e.code === "Escape") {
+      G.togglePause(state);
+    }
+  });
+  window.addEventListener("keyup", function (e) {
+    if (LEFT_CODES[e.code]) keys.left = false;
+    else if (RIGHT_CODES[e.code]) keys.right = false;
+  });
+  // 창을 떠나면 눌린 키를 놓고 일시정지한다.
+  function suspend() {
+    keys.left = keys.right = pad.left = pad.right = false;
+    if (state.phase === "playing") G.togglePause(state);
+  }
+  window.addEventListener("blur", suspend);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) suspend(); });
+
+  canvas.addEventListener("pointerdown", function () { canvas.focus(); startOrRestart(); });
+
+  function bindPad(id, side) {
+    var el = document.getElementById(id);
+    function down(e) { e.preventDefault(); pad[side] = true; el.classList.add("held"); startOrRestart(); }
+    function up() { pad[side] = false; el.classList.remove("held"); }
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    el.addEventListener("pointerleave", up);
+  }
+  bindPad("pad-left", "left");
+  bindPad("pad-right", "right");
+
+  // ---------- 그리기 ----------
+  function drawBackground() {
+    var g = ctx.createLinearGradient(0, 0, 0, G.HEIGHT);
+    g.addColorStop(0, "#1b1712");
+    g.addColorStop(1, "#0c0d10");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, G.WIDTH, G.HEIGHT);
+
+    ctx.fillStyle = "#2b241c";
+    ctx.fillRect(0, G.FLOOR_Y, G.WIDTH, G.HEIGHT - G.FLOOR_Y);
+    ctx.fillStyle = "#3d3327";
+    ctx.fillRect(0, G.FLOOR_Y, G.WIDTH, 3);
+  }
+
+  // 천장은 종유석보다 나중에 그려 종유석이 바위에서 빠져나오는 것처럼 보이게 한다.
+  function drawCeiling() {
+    ctx.fillStyle = "#2b241c";
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    for (var i = 0; i < ceiling.length; i++) ctx.lineTo(ceiling[i].x, ceiling[i].y);
+    ctx.lineTo(G.WIDTH, 0);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawSpike(s) {
+    var p = G.spikePoints(s);
+    var g = ctx.createLinearGradient(s.x, 0, s.x + s.w, 0);
+    g.addColorStop(0, "#c9bfae");
+    g.addColorStop(0.5, "#9c8f7b");
+    g.addColorStop(1, "#6e6354");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(p[0].x, p[0].y);
+    ctx.lineTo(p[1].x, p[1].y);
+    ctx.lineTo(p[2].x, p[2].y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawPlayer() {
+    var x = state.playerX;
+    var top = G.FLOOR_Y - G.PLAYER_H;
+    // 헤드램프 불빛
+    ctx.fillStyle = "rgba(255, 220, 140, 0.10)";
+    ctx.beginPath();
+    ctx.moveTo(x + G.PLAYER_W / 2, top + 6);
+    ctx.lineTo(x - 30, top - 140);
+    ctx.lineTo(x + G.PLAYER_W + 30, top - 140);
+    ctx.closePath();
+    ctx.fill();
+    // 몸
+    ctx.fillStyle = "#e07b39";
+    ctx.beginPath();
+    ctx.roundRect(x + 4, top + 12, G.PLAYER_W - 8, G.PLAYER_H - 12, 5);
+    ctx.fill();
+    // 안전모
+    ctx.fillStyle = "#f2c94c";
+    ctx.beginPath();
+    ctx.arc(x + G.PLAYER_W / 2, top + 13, 12, Math.PI, 0);
+    ctx.fill();
+    ctx.fillRect(x + 2, top + 12, G.PLAYER_W - 4, 3);
+    // 램프
+    ctx.fillStyle = "#fff6d5";
+    ctx.beginPath();
+    ctx.arc(x + G.PLAYER_W / 2, top + 7, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawHud() {
+    ctx.fillStyle = "#e8eaed";
+    ctx.font = "600 18px system-ui, sans-serif";
+    ctx.textBaseline = "top";
+    ctx.textAlign = "left";
+    ctx.fillText("점수 " + state.score, 12, 40);
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#9aa0a6";
+    ctx.fillText("최고 " + Math.max(best, state.score), G.WIDTH - 12, 40);
+  }
+
+  function drawMessage(title, lines) {
+    ctx.fillStyle = "rgba(10, 11, 13, 0.72)";
+    ctx.fillRect(0, G.HEIGHT / 2 - 90, G.WIDTH, 180);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#f2b45a";
+    ctx.font = "700 30px system-ui, sans-serif";
+    ctx.fillText(title, G.WIDTH / 2, G.HEIGHT / 2 - 40);
+    ctx.fillStyle = "#e8eaed";
+    ctx.font = "16px system-ui, sans-serif";
+    for (var i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], G.WIDTH / 2, G.HEIGHT / 2 + 4 + i * 26);
+    }
+  }
+
+  function draw() {
+    drawBackground();
+    for (var i = 0; i < state.spikes.length; i++) drawSpike(state.spikes[i]);
+    drawCeiling();
+    drawPlayer();
+    drawHud();
+    if (state.phase === "ready") {
+      drawMessage("종유석 피하기", ["A·← 왼쪽 · D·→ 오른쪽","Space 또는 화면을 눌러 시작"]);
+    } else if (state.phase === "paused") {
+      drawMessage("일시정지", ["P 또는 Space로 계속"]);
+    } else if (state.phase === "over") {
+      drawMessage("부딪혔습니다!", ["점수 " + state.score + " · 최고 " + best, "Space 또는 화면을 눌러 다시 시작"]);
+    }
+  }
+
+  // ---------- 반복 ----------
+  var last = null;
+  function frame(now) {
+    var dt = last === null ? 0 : (now - last) / 1000;
+    last = now;
+    var input = { left: keys.left || pad.left, right: keys.right || pad.right };
+    var before = state.phase;
+    G.step(state, input, dt, Math.random);
+    if (before === "playing" && state.phase === "over") saveBest();
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  canvas.focus();
+})();
+</script>
+</body>
+</html>
