@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>설문 집계기</title>
+</head>
+<body>
+<!-- 화면 -->
+
+<!-- 계산 로직: 화면과 무관한 순수 함수. 시험(test/tally.test.js)이 이 블록만 꺼내 실행한다. -->
+<script id="tally-core">
+(function (root) {
+  "use strict";
+
+  function isDelimiter(ch) {
+    return ch === "\t" || ch === "\n" || ch === "\r";
+  }
+
+  // 엑셀이 따옴표로 감싼 칸("…", 안의 따옴표는 "")을 읽는다.
+  // 닫는 따옴표가 없거나 닫은 뒤 곧바로 구분자가 오지 않으면 null을 돌려주고,
+  // 부르는 쪽은 그 칸을 글자 그대로 읽는다.
+  function readQuoted(text, start) {
+    var n = text.length;
+    var value = "";
+    var j = start + 1;
+    while (j < n) {
+      var ch = text.charAt(j);
+      if (ch === '"') {
+        if (text.charAt(j + 1) === '"') {
+          value += '"';
+          j += 2;
+          continue;
+        }
+        var after = j + 1;
+        if (after >= n || isDelimiter(text.charAt(after))) {
+          return { value: value, end: after };
+        }
+        return null;
+      }
+      value += ch;
+      j++;
+    }
+    return null;
+  }
+
+  // 탭으로 칸을, 줄바꿈(\n, \r\n, \r)으로 줄을 나눈다.
+  // 맨 끝의 완전히 빈 줄(엑셀 복사본 끝의 줄바꿈)은 버린다.
+  function parseTsv(text) {
+    text = String(text == null ? "" : text);
+    var n = text.length;
+    var rows = [];
+    var row = [];
+    var i = 0;
+    for (;;) {
+      var value = null;
+      if (text.charAt(i) === '"') {
+        var quoted = readQuoted(text, i);
+        if (quoted) {
+          value = quoted.value;
+          i = quoted.end;
+        }
+      }
+      if (value === null) {
+        var j = i;
+        while (j < n && !isDelimiter(text.charAt(j))) j++;
+        value = text.slice(i, j);
+        i = j;
+      }
+      row.push(value);
+      if (i >= n) {
+        rows.push(row);
+        break;
+      }
+      if (text.charAt(i) === "\t") {
+        i++;
+        continue;
+      }
+      i += text.charAt(i) === "\r" && text.charAt(i + 1) === "\n" ? 2 : 1;
+      rows.push(row);
+      row = [];
+    }
+    while (rows.length > 0) {
+      var last = rows[rows.length - 1];
+      if (last.length === 1 && last[0] === "") rows.pop();
+      else break;
+    }
+    return rows;
+  }
+
+  // "valid" | "blank" | "excluded"
+  function classifyCell(value) {
+    if (value === undefined || value === null) return "blank";
+    var trimmed = String(value).trim();
+    if (trimmed === "") return "blank";
+    if (/^[1-5]$/.test(trimmed)) return "valid";
+    return "excluded";
+  }
+
+  // 합 ÷ 수를 소수 셋째 자리에서 반올림해 둘째 자리까지.
+  // 부동소수점 오차를 피하려고 정수로 계산한다(합과 수는 0 이상의 정수).
+  function formatAverage(sum, count) {
+    if (!count) return "-";
+    var hundredths = Math.floor((200 * sum + count) / (2 * count));
+    var whole = Math.floor(hundredths / 100);
+    var frac = hundredths % 100;
+    return whole + "." + (frac < 10 ? "0" : "") + frac;
+  }
+
+  function tally(text) {
+    var rows = parseTsv(text);
+    var result = { respondents: 0, overlongRows: 0, questions: [] };
+    if (rows.length === 0) return result;
+
+    var header = rows[0];
+    var stats = [];
+    for (var c = 1; c < header.length; c++) {
+      var label = header[c].trim();
+      stats.push({
+        column: c,
+        label: label === "" ? "(" + (c + 1) + "열)" : label,
+        valid: 0,
+        sum: 0,
+        blank: 0,
+        excluded: 0
+      });
+    }
+
+    for (var r = 1; r < rows.length; r++) {
+      var row = rows[r];
+      if (row.length > header.length) result.overlongRows++;
+      for (var k = 0; k < stats.length; k++) {
+        var s = stats[k];
+        var value = row[s.column];
+        var kind = classifyCell(value);
+        if (kind === "valid") {
+          s.valid++;
+          s.sum += Number(value.trim());
+        } else if (kind === "blank") {
+          s.blank++;
+        } else {
+          s.excluded++;
+        }
+      }
+    }
+
+    result.respondents = rows.length - 1;
+    result.questions = stats.map(function (s) {
+      return {
+        label: s.label,
+        valid: s.valid,
+        average: formatAverage(s.sum, s.valid),
+        blank: s.blank,
+        excluded: s.excluded
+      };
+    });
+    return result;
+  }
+
+  root.SurveyTally = {
+    parseTsv: parseTsv,
+    classifyCell: classifyCell,
+    formatAverage: formatAverage,
+    tally: tally
+  };
+})(typeof globalThis !== "undefined" ? globalThis : this);
+</script>
+</body>
+</html>
