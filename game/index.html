@@ -70,8 +70,8 @@
 <main>
   <h1>종유석 피하기</h1>
   <p class="keys">
-    <span><kbd>W</kbd> 왼쪽</span>
-    <span><kbd>D</kbd> 오른쪽</span>
+    <span><kbd>A</kbd> <kbd>←</kbd> 왼쪽</span>
+    <span><kbd>D</kbd> <kbd>→</kbd> 오른쪽</span>
     <span><kbd>Space</kbd> 시작</span>
     <span><kbd>P</kbd> 일시정지</span>
   </p>
@@ -286,7 +286,7 @@
 
   // ---------- 입력 ----------
   // e.code로 판정해 한글 입력 상태(W가 'ㅈ'로 들어오는 경우)에서도 동작하게 한다.
-  var LEFT_CODES = { KeyW: true, KeyA: true, ArrowLeft: true };
+  var LEFT_CODES = { KeyA: true, ArrowLeft: true };
   var RIGHT_CODES = { KeyD: true, ArrowRight: true };
 
   function startOrRestart() {
@@ -432,7 +432,7 @@
     drawPlayer();
     drawHud();
     if (state.phase === "ready") {
-      drawMessage("종유석 피하기", ["W 왼쪽 · D 오른쪽", "Space 또는 화면을 눌러 시작"]);
+      drawMessage("종유석 피하기", ["A·← 왼쪽 · D·→ 오른쪽","Space 또는 화면을 눌러 시작"]);
     } else if (state.phase === "paused") {
       drawMessage("일시정지", ["P 또는 Space로 계속"]);
     } else if (state.phase === "over") {

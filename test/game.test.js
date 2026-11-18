@@ -163,9 +163,10 @@ test("다시 시작하면 점수·시간·종유석이 초기화된다", () => {
   assert.equal(again.spikes.length, 0);
 });
 
-test("키 판정은 e.code로 하고 W·A·← 는 왼쪽, D·→ 는 오른쪽", () => {
+test("키 판정은 e.code로 하고 A·← 는 왼쪽, D·→ 는 오른쪽 (W는 쓰지 않음)", () => {
   const html = fs.readFileSync(GAME, "utf8");
-  assert.match(html, /LEFT_CODES = \{ KeyW: true, KeyA: true, ArrowLeft: true \}/);
+  assert.match(html, /LEFT_CODES = \{ KeyA: true, ArrowLeft: true \}/);
+  assert.doesNotMatch(html, /KeyW/);
   assert.match(html, /RIGHT_CODES = \{ KeyD: true, ArrowRight: true \}/);
   assert.doesNotMatch(html, /e\.key\b/, "한글 입력 상태에서 깨지는 e.key를 쓰지 않는다");
 });
