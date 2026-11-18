@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadCore } = require("./load-core");
 
-const { parseTsv, classifyCell, formatAverage, tally } = loadCore();
+const { parseTsv, classifyCell, formatAverage, tally, barChartData, SCALE_MAX } = loadCore();
 
 // vm 컨텍스트에서 만든 배열은 다른 realm 객체라 deepStrictEqual이 프로토타입 차이로 실패한다.
 // JSON으로 한 번 옮겨 비교한다.
@@ -146,4 +146,27 @@ test("tally: 셋째 자리 반올림이 표에 그대로 반영된다", () => {
   // 유효 3개: 1+2+2 = 5 → 1.666… → 1.67
   const result = tally("id\tQ\n1\t1\n2\t2\n3\t2\n");
   assert.equal(result.questions[0].average, "1.67");
+});
+
+test("barChartData: 막대 길이는 반올림된 평균 ÷ 5", () => {
+  assert.equal(SCALE_MAX, 5);
+  // Q1 평균 3.25(유효 4), Q2 평균 5.00, Q3 평균 1.00, Q4 유효 없음
+  const result = tally("id\tQ1\tQ2\tQ3\tQ4\n1\t5\t5\t1\tx\n2\t4\t5\t1\t\n3\t3\t\t\t\n4\t1\t\t\t\n");
+  assert.deepEqual(plain(barChartData(result.questions)), [
+    { label: "Q1", average: "3.25", valid: 4, ratio: 0.65 },
+    { label: "Q2", average: "5.00", valid: 2, ratio: 1 },
+    { label: "Q3", average: "1.00", valid: 2, ratio: 0.2 },
+    { label: "Q4", average: "-", valid: 0, ratio: null },
+  ]);
+});
+
+test("barChartData: 표에 보이는 값과 같은 길이(반올림 후 값 사용)", () => {
+  // 1+2+2 = 5 / 3 = 1.666… → 표 1.67 → 막대 1.67 / 5
+  const [bar] = barChartData(tally("id\tQ\n1\t1\n2\t2\n3\t2\n").questions);
+  assert.equal(bar.average, "1.67");
+  assert.equal(bar.ratio, 1.67 / 5);
+});
+
+test("barChartData: 문항이 없으면 빈 목록", () => {
+  assert.equal(barChartData(tally("").questions).length, 0);
 });

@@ -257,11 +257,24 @@
     return result;
   }
 
+  var SCALE_MAX = 5;
+
+  // 막대그래프용 자료. 막대 길이(ratio, 0~1)는 표에 보이는 반올림된 평균으로 계산해
+  // 표와 그래프가 어긋나지 않게 한다. 유효 응답이 없으면 ratio는 null.
+  function barChartData(questions) {
+    return questions.map(function (q) {
+      var ratio = q.average === "-" ? null : Number(q.average) / SCALE_MAX;
+      return { label: q.label, average: q.average, valid: q.valid, ratio: ratio };
+    });
+  }
+
   root.SurveyTally = {
+    SCALE_MAX: SCALE_MAX,
     parseTsv: parseTsv,
     classifyCell: classifyCell,
     formatAverage: formatAverage,
-    tally: tally
+    tally: tally,
+    barChartData: barChartData
   };
 })(typeof globalThis !== "undefined" ? globalThis : this);
 </script>
